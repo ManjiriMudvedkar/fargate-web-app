@@ -1,0 +1,65 @@
+version: 2.1
+
+commands:
+  store_artifacts_cmd:
+    steps:
+      - store_artifacts: # store the uberjar as an artifact
+          path: target/gs-spring-boot-0.1.0.jar  
+  build:
+    steps:
+      - checkout
+      - run: 
+          command: |
+            mvn clean install;
+            ls -l;
+      - store_artifacts_cmd
+      - persist_to_workspace:
+          root: target
+          paths:
+            - gs-spring-boot-0.1.0.jar
+  build_push_to_ecr_cmd:
+    steps:
+      - checkout      
+      - run:
+          name: Install dependencies for AWS
+          command: |
+            apk add py-pip
+            pip install awscli
+      - run:
+          name: Build image
+          command: |          
+            docker build -t ${ECR_REPO_NAME}:${IMAGE_TAG} .
+      - run:
+          name: push image
+          command: |
+            eval $(aws ecr get-login --region ${AWS_DEFAULT_REGION} --no-include-email)
+            docker tag ${ECR_REPO_NAME}:${IMAGE_TAG} ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${ECR_REPO_NAME}:${IMAGE_TAG}
+            docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${ECR_REPO_NAME}:${IMAGE_TAG}  
+executors:
+  java-executor:
+    docker:
+      - image: circleci/openjdk:8-jdk
+  docker-executor:
+    docker:
+      - image: docker:18.06.1-ce-git      
+jobs:
+  build_artifact:
+    executor: java-executor
+    steps:
+      - build
+  build_and_publish_docker_image:
+    executor: docker-executor
+    steps:
+      - checkout
+      - attach_workspace:
+          at: target
+      - setup_remote_docker
+      - build_push_to_ecr_cmd
+workflows:
+  build_artifact:
+    jobs:
+      - build_artifact
+      - build_and_publish_docker_image:
+          context: aws-ecr-login      
+          requires:
+            - build_artifact    
